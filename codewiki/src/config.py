@@ -100,7 +100,7 @@ class Config:
         
         if self.doc_type:
             doc_type_instructions = {
-                'reference': "Focus on reference documentation: interfaces, parameters, return types, and usage examples.",
+                'api': "Focus on API documentation: endpoints, parameters, return types, and usage examples.",
                 'architecture': "Focus on architecture documentation: system design, component relationships, and data flow.",
                 'user-guide': "Focus on user guide documentation: how to use features, step-by-step tutorials.",
                 'developer': "Focus on developer documentation: code structure, contribution guidelines, and implementation details.",

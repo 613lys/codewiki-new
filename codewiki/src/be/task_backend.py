@@ -148,7 +148,10 @@ class TaskBackend(TaskBackendBase):
 
         if result_path.exists():
             content = result_path.read_text(encoding="utf-8").strip()
-            validation_errors = self._validate_module_markdown_content(content)
+            validation_errors = self._validate_module_markdown_content(
+                content,
+                core_component_ids=core_component_ids,
+            )
             validation_result = await validate_mermaid_diagrams(
                 str(result_path),
                 result_path.name,
@@ -370,7 +373,7 @@ class TaskBackend(TaskBackendBase):
         """Create an AI-IDE task that references source files to read."""
         repo_root = Path(self._config.repo_path).resolve()
 
-        source_refs, missing_components = self._format_component_references_with_missing(
+        source_refs, missing_components = self._format_core_component_references_for_prompt(
             components,
             core_component_ids,
             repo_root,
@@ -392,11 +395,7 @@ class TaskBackend(TaskBackendBase):
         user_prompt = USER_PROMPT.format(
             module_name=module_name,
             module_tree=self._format_module_tree_for_prompt(module_tree, module_name),
-            formatted_core_component_codes=(
-                "This task is running in local task mode, so source code is not copied here.\n"
-                "Read the following files directly from the repository workspace.\n\n"
-                f"{source_refs}"
-            ),
+            formatted_core_component_codes=source_refs,
         )
 
         return (
@@ -404,7 +403,7 @@ class TaskBackend(TaskBackendBase):
             "Complete the documentation task below.\n\n"
             "## Workspace Reading Contract\n\n"
             f"- Repository root: `{repo_root}`.\n"
-            "- Treat every file listed in `<CORE_COMPONENT_CODES>` as required reading.\n"
+            "- Treat every file listed in the core component section as required reading.\n"
             "- Open those files directly from the repository workspace before writing the result.\n"
             "- Use the listed component IDs to focus your reading, but inspect surrounding code, imports, and callers when needed.\n"
             "- This task intentionally contains file references instead of copied source code.\n\n"
@@ -441,13 +440,14 @@ class TaskBackend(TaskBackendBase):
         return (
             "# CodeWiki Task\n\n"
             f"Repair the existing markdown result for `{module_name}`.\n\n"
-            "## Mermaid Validation Error\n\n"
+            "## Validation Error\n\n"
             "```text\n"
             f"{validation_result}\n"
             "```\n\n"
             "## Required Action\n\n"
             f"- Edit `{result_path}` in place.\n"
             "- Fix every validation error reported above.\n"
+            "- If the document is too shallow, reread the referenced source files from the original task and expand the content according to the original CodeWiki prompt.\n"
             "- Keep the document as final markdown only.\n"
             "- Do not wrap the whole document in a code fence or add chat prefaces.\n"
         )
@@ -463,6 +463,46 @@ class TaskBackend(TaskBackendBase):
             Path(self._config.repo_path).resolve(),
         )
         return refs
+
+    def _format_core_component_references_for_prompt(
+        self,
+        components: Dict[str, Node],
+        core_component_ids: List[str],
+        repo_root: Path,
+    ) -> tuple[str, list[str]]:
+        grouped_components: dict[str, list[str]] = {}
+        missing_components: list[str] = []
+        for component_id in core_component_ids:
+            component = components.get(component_id)
+            if component is None:
+                missing_components.append(component_id)
+                continue
+            relative_path = self._component_relative_path(component, repo_root)
+            grouped_components.setdefault(relative_path, []).append(component_id)
+
+        sections: list[str] = []
+        for relative_path, component_ids_in_file in sorted(grouped_components.items()):
+            section_lines = [
+                f"# File: {relative_path}",
+                "",
+                "## Core Components in this file:",
+            ]
+            for component_id in sorted(component_ids_in_file):
+                section_lines.append(f"- {component_id}")
+            section_lines.extend(
+                [
+                    "",
+                    "## File Content:",
+                    "Source code is intentionally not copied into this task prompt.",
+                    f"Read this file directly from the repository workspace: `{relative_path}`.",
+                    "",
+                ]
+            )
+            sections.append("\n".join(section_lines))
+
+        if not sections:
+            return "No source files were provided by analysis.", missing_components
+        return "\n\n".join(sections), missing_components
 
     def _format_component_references_with_missing(
         self,
@@ -627,7 +667,11 @@ class TaskBackend(TaskBackendBase):
         return errors
 
     @staticmethod
-    def _validate_module_markdown_content(content: str) -> List[str]:
+    def _validate_module_markdown_content(
+        content: str,
+        *,
+        core_component_ids: List[str],
+    ) -> List[str]:
         errors: list[str] = []
         stripped = content.strip()
         if not stripped:
@@ -646,6 +690,41 @@ class TaskBackend(TaskBackendBase):
             errors.append("Markdown result appears to contain a chat preface")
         if "# codewiki task" in lower_start:
             errors.append("Markdown result appears to contain the task instructions instead of the answer")
+        component_count = len(core_component_ids)
+        min_chars = 1200 if component_count <= 3 else 2200
+        if component_count >= 10:
+            min_chars = 3200
+        if len(stripped) < min_chars:
+            errors.append(
+                f"Markdown result is too short for {component_count} core components "
+                f"({len(stripped)} chars, expected at least {min_chars})"
+            )
+        required_markers = [
+            "architecture",
+            "component",
+        ]
+        lower_content = stripped.lower()
+        for marker in required_markers:
+            if marker not in lower_content:
+                errors.append(f"Markdown result should include a `{marker}` section or discussion")
+        if "```mermaid" not in lower_content:
+            errors.append("Markdown result should include at least one Mermaid diagram")
+        if "task snapshot" in lower_content or "referenced source files" in lower_content:
+            errors.append(
+                "Markdown result appears to describe the task artifact instead of the source code"
+            )
+        if component_count > 0:
+            mentioned = 0
+            for component_id in core_component_ids:
+                symbol = component_id.split("::", 1)[-1]
+                if symbol and symbol in stripped:
+                    mentioned += 1
+            minimum_mentions = min(3, component_count)
+            if mentioned < minimum_mentions:
+                errors.append(
+                    "Markdown result does not mention enough concrete core components "
+                    f"({mentioned}/{minimum_mentions} expected)"
+                )
         return errors
 
     @staticmethod

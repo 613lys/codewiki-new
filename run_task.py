@@ -486,7 +486,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--focus", "-f", help="Comma-separated modules or paths to focus.")
     parser.add_argument(
         "--doc-type",
-        choices=["reference", "architecture", "user-guide", "developer"],
+        choices=["api", "architecture", "user-guide", "developer"],
         help="Documentation style to request in generated tasks.",
     )
     parser.add_argument("--instructions", help="Additional documentation instructions.")

@@ -101,7 +101,7 @@ directory, or regenerating the viewer without rerunning analysis.
 - `--include "*.py,*.ts"` limits file patterns.
 - `--exclude "*test*,*spec*"` excludes file patterns.
 - `--focus "src/core,packages/app"` asks the generated tasks to focus on specific modules.
-- `--doc-type reference|architecture|user-guide|developer` changes the documentation style.
+- `--doc-type api|architecture|user-guide|developer` changes the documentation style.
 - `--instructions "..."` adds custom guidance to generated tasks.
 - `--max-depth N` controls module decomposition depth.
 - `--verbose` prints progress details.
